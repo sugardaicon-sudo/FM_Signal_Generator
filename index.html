@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Audio Signal Generator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            user-select: none;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-sizing: border-box;
+        }
+        h3 { margin-top: 0; color: #333; border-bottom: 2px solid #eee; padding-bottom: 5px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 10px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button:active { background-color: #0056b3; }
+        button.active { background-color: #28a745; }
+        .display-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .display {
+            font-size: 64px;
+            font-weight: bold;
+            color: #222;
+        }
+        .unit { font-size: 24px; color: #666; }
+        .ctrl-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .ctrl-btn { background-color: #6c757d; font-size: 20px; }
+        .ctrl-btn:active { background-color: #545b62; }
+        .ch-container {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 25px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .ch-label {
+            font-size: 18px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .ch-label input { width: 22px; height: 22px; }
+        .stop-btn {
+            width: 100%;
+            background-color: #dc3545;
+            font-size: 20px;
+            padding: 15px;
+        }
+        .stop-btn:active { background-color: #bd2130; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>Frequency (Hz)</h3>
+    <div class="grid" id="freq-grid"></div>
+
+    <div class="display-container">
+        <span class="display" id="dbm-display">0.0</span>
+        <span class="unit"> dBm</span>
+    </div>
+
+    <div class="ctrl-grid">
+        <button class="ctrl-btn" onclick="adjustLevel(1.0)">+1.0</button>
+        <button class="ctrl-btn" onclick="adjustLevel(-1.0)">-1.0</button>
+        <button class="ctrl-btn" onclick="adjustLevel(0.1)">+0.1</button>
+        <button class="ctrl-btn" onclick="adjustLevel(-0.1)">-0.1</button>
+    </div>
+
+    <h3>Channel Output</h3>
+    <div class="ch-container">
+        <label class="ch-label"><input type="checkbox" id="l-ch" checked onchange="updateChannels()"> L Ch</label>
+        <label class="ch-label"><input type="checkbox" id="r-ch" checked onchange="updateChannels()"> R Ch</label>
+    </div>
+
+    <button class="stop-btn" onclick="stopAudio()">STOP</button>
+</div>
+
+<script>
+    const frequencies = ["50", "100", "400", "1k", "3k", "5k", "7.5k", "10k", "15k"];
+    let currentDbm = 0.0;
+    let selectedFreq = null;
+    let offsetDb = 0.0; // 校正用オフセット値
+    
+    // Web Audio APIの変数
+    let audioCtx = null;
+    let oscillator = null; 
+    let gainNode = null;
+    let channelMerger = null;
+    let lGain = null;
+    let rGain = null;
+
+    // 画面初期化：周波数ボタンの生成
+    const grid = document.getElementById('freq-grid');
+    frequencies.forEach(freq => {
+        const btn = document.createElement('button');
+        btn.innerText = freq + "Hz";
+        btn.id = "btn-" + freq;
+        btn.onclick = () => selectFrequency(freq);
+        grid.appendChild(btn);
+    });
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    function selectFrequency(freq) {
+        initAudio();
+        // ボタンの見た目切り替え
+        if (selectedFreq) {
+            document.getElementById("btn-" + selectedFreq).classList.remove('active');
+        }
+        selectedFreq = freq;
+        document.getElementById("btn-" + selectedFreq).classList.add('active');
+        
+        playAudio();
+    }
+
+    function adjustLevel(amount) {
+        let newLevel = currentDbm + amount;
+        if (newLevel >= -20.0 && newLevel <= 20.0) {
+            currentDbm = Math.round(newLevel * 10) / 10;
+            // 符号付き表示
+            document.getElementById('dbm-display').innerText = currentDbm === 0 ? "0.0" : (currentDbm > 0 ? "+" : "") + currentDbm.toFixed(1);
+            if (selectedFreq) playAudio();
+        }
+    }
+
+    function playAudio() {
+        stopAudioSources();
+
+        if (!selectedFreq) return;
+
+        // ※スマホブラウザの制約上、今回はWAV読み込みではなく超高精度な内部サイン波生成ロジックにしています
+        oscillator = audioCtx.createOscillator();
+        let hz = parseFloat(selectedFreq.replace('k', '000'));
+        oscillator.frequency.value = hz;
+
+        // ゲイン（音量）計算
+        gainNode = audioCtx.createGain();
+        let deltaDb = currentDbm + offsetDb;
+        let gainValue = Math.pow(10, deltaDb / 20.0);
+        gainNode.gain.value = gainValue;
+
+        // L/R 独立制御のためのノード
+        lGain = audioCtx.createGain();
+        rGain = audioCtx.createGain();
+        channelMerger = audioCtx.createChannelMerger(2);
+
+        // ルーティング: 信号 -> 共通ゲイン -> L/R個別ゲイン -> ステレオ結合 -> 出力
+        oscillator.connect(gainNode);
+        
+        gainNode.connect(lGain);
+        gainNode.connect(rGain);
+        
+        lGain.connect(channelMerger, 0, 0); // Lチャンネルへ
+        rGain.connect(channelMerger, 0, 1); // Rチャンネルへ
+        
+        channelMerger.connect(audioCtx.destination);
+
+        // チェックボックスの状態を適用
+        updateChannels();
+
+        oscillator.start();
+    }
+
+    function updateChannels() {
+        if (!lGain || !rGain) return;
+        const lOn = document.getElementById('l-ch').checked;
+        const rOn = document.getElementById('r-ch').checked;
+        
+        // 瞬時にON/OFFを切り替える (0=消音, 1=そのまま)
+        lGain.gain.value = lOn ? 1.0 : 0.0;
+        rGain.gain.value = rOn ? 1.0 : 0.0;
+    }
+
+    function stopAudioSources() {
+        if (oscillator) {
+            try { oscillator.stop(); } catch(e) {}
+            oscillator.disconnect();
+            oscillator = null;
+        }
+    }
+
+    function stopAudio() {
+        stopAudioSources();
+        if (selectedFreq) {
+            document.getElementById("btn-" + selectedFreq).classList.remove('active');
+            selectedFreq = null;
+        }
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+
+  "name": "FM Signal Generator",
+
+  "short_name": "FM Signal",
+
+  "start_url": "index.html",
+
+  "display": "standalone",
+
+  "background_color": "#f0f2f5",
+
+  "theme_color": "#007aff",
+
+  "icons": [
+
+    {
+
+      "src": "icon.png",
+
+      "sizes": "512x512",
+
+      "type": "image/png"
+
+    }
+
+  ]
+
+}
